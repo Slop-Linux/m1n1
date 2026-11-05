@@ -167,6 +167,27 @@ static const struct adt_tunable_info atc_dp_tunables_t8132[] = {
     {"tunable_AUX_TOP", "apple,tunable-dp", 0x16000, 0x14, false},
     {"tunable_AUSCMN_SHM", "apple,tunable-dp-efuse", 0xa00, 0x38, false},
     {"tunable_CLKMON_CFG", "apple,tunable-dp-efuse", 0x2600, 0x80, false},
+    /* aciophy_apply_usb_tunables globals, multifunction (USB3 + DP) mode */
+    {"tunable_AUSCMN_DIG", "apple,tunable-dp-usb", 0x800, 0x4c, false},
+    {"tunable_AUSPLL_CORE", "apple,tunable-dp-usb", 0x2200, 0x280, false},
+    {"tunable_CIO3PLL_CORE", "apple,tunable-dp-usb", 0x2a00, 0x280, false},
+    {"tunable_CIO3PLL_TOP", "apple,tunable-dp-usb", 0x2800, 0x100, false},
+    {"tunable_ACIOPHY_LANE_USBC0", "apple,tunable-dp-usb", 0x5000, 0x80, false},
+    {"tunable_ACIOPHY_PLL_TOP", "apple,tunable-dp-usb", 0x1000, 0x40, false},
+    {"tunable_ACIOPHY_TOP", "apple,tunable-dp-usb", 0x0, 0x224, false},
+};
+
+/*
+ * AppleT8132TypeCPhy::getTrainingTableEntry reads these from the atc-phy node:
+ * 0x40 bytes of little-endian TX equalization presets, per link rate or for
+ * all rates. They are copied unchanged.
+ */
+static const char *const atc_dp_training_tables[][2] = {
+    {"dp-training-table-rbr", "apple,dp-training-table-rbr"},
+    {"dp-training-table-hbr", "apple,dp-training-table-hbr"},
+    {"dp-training-table-hbr2", "apple,dp-training-table-hbr2"},
+    {"dp-training-table-hbr3", "apple,dp-training-table-hbr3"},
+    {"dp-training-table", "apple,dp-training-table"},
 };
 
 static const struct atc_fuse_info atc_fuses_t8103_port0[] = {
@@ -499,6 +520,12 @@ static void dt_copy_atc_tunables(void *dt, const char *adt_path, const char *dt_
                 printf("FDT: Unable to setup ATC DisplayPort tunables for %s\n", adt_path);
                 break;
             }
+        }
+        for (size_t i = 0; i < ARRAY_SIZE(atc_dp_training_tables); ++i) {
+            u32 len;
+            const void *table = adt_getprop(adt, adt_node, atc_dp_training_tables[i][0], &len);
+            if (table && fdt_setprop(dt, fdt_node, atc_dp_training_tables[i][1], table, len) < 0)
+                printf("FDT: Unable to copy %s for %s\n", atc_dp_training_tables[i][0], adt_path);
         }
     }
 
