@@ -146,6 +146,29 @@ static const struct adt_tunable_info atc_tunables_t8122[] = {
     {"tunable_LN1_TX_SHM_CIO_DFLT", "apple,tunable-lane1-cio", 0x14000, 0x1000, true},
 };
 
+/*
+ * T8132 DisplayPort mode tunables, by ADT name as AppleT8132TypeCPhy (26A428)
+ * applies them: aciophy_apply_tunables (ATCAXI2AF* on register window 0x1d
+ * and 0x1e, ATC_FABRIC on 2, ATC_COMMON_CFG on 0x1f), apply_dptx_tunables
+ * (AUSCMN_DIG 4, AUSPLL_CORE 8, AUX_SHM 0x1a, AUX_TOP 0x19) and
+ * phy_efuse_load (AUSCMN_SHM 5, CLKMON_CFG 9). Offsets and sizes are the
+ * windows of AppleT8132TypeCPhy::start relative to the DT resource the
+ * property is applied to. macOS skips a tunable that the ADT lacks.
+ */
+static const struct adt_tunable_info atc_dp_tunables_t8132[] = {
+    {"tunable_ATCAXI2AF_WR_DIS", "apple,tunable-dp-axi2af", 0x0, 0x4040, false},
+    {"tunable_ATCAXI2AF_LOCK_LOCK", "apple,tunable-dp-axi2af", 0x0, 0x4040, false},
+    {"tunable_ATCAXI2AF_LIOA_IOA", "apple,tunable-dp-lioa", 0x0, 0x3e04, false},
+    {"tunable_ATC_FABRIC", "apple,tunable-dp-fabric", 0x44000, 0x1ac, false},
+    {"tunable_ATC_COMMON_CFG", "apple,tunable-dp-common-cfg", 0x0, 0x70, false},
+    {"tunable_AUSCMN_DIG", "apple,tunable-dp", 0x800, 0x4c, false},
+    {"tunable_AUSPLL_CORE", "apple,tunable-dp", 0x2200, 0x280, false},
+    {"tunable_AUX_SHM", "apple,tunable-dp", 0x16400, 0x14, false},
+    {"tunable_AUX_TOP", "apple,tunable-dp", 0x16000, 0x14, false},
+    {"tunable_AUSCMN_SHM", "apple,tunable-dp-efuse", 0xa00, 0x38, false},
+    {"tunable_CLKMON_CFG", "apple,tunable-dp-efuse", 0x2600, 0x80, false},
+};
+
 static const struct atc_fuse_info atc_fuses_t8103_port0[] = {
     {0x23d2bc434, 9, 6, CIO3PLL_DCO_NCTRL, CIO3PLL_DCO_COARSEBIN_EFUSE0},
     {0x23d2bc434, 15, 6, CIO3PLL_DCO_NCTRL, CIO3PLL_DCO_COARSEBIN_EFUSE1},
@@ -466,6 +489,17 @@ static void dt_copy_atc_tunables(void *dt, const char *adt_path, const char *dt_
         ret = dt_append_atc_tunable(dt, adt_node, fdt_node, &tunables[i]);
         if (ret)
             goto cleanup;
+    }
+
+    if (adt_is_compatible_at(adt, adt_node, "atc-phy,t8132", 0)) {
+        for (size_t i = 0; i < ARRAY_SIZE(atc_dp_tunables_t8132); ++i) {
+            if (dt_append_atc_tunable(dt, adt_node, fdt_node, &atc_dp_tunables_t8132[i])) {
+                for (size_t j = 0; j < ARRAY_SIZE(atc_dp_tunables_t8132); ++j)
+                    fdt_delprop(dt, fdt_node, atc_dp_tunables_t8132[j].fdt_name);
+                printf("FDT: Unable to setup ATC DisplayPort tunables for %s\n", adt_path);
+                break;
+            }
+        }
     }
 
     if (adt_is_compatible_at(adt, adt_node, "atc-phy,t8122", 0) ||
