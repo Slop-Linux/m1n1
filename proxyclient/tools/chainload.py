@@ -25,17 +25,28 @@ from construct import Array, Int64ul
 
 new_base = u.base
 
+# A locked RVBAR must keep pointing at the next image's reset vectors.
+# Mach-O has a header before the vectors; raw m1n1 starts with them.
+locked_rvbar = None
+if not u.cpu_features.apple_sysregs_unlocked:
+    boot_cpu = next(cpu for cpu in u.adt["cpus"] if cpu.state == "running")
+    rvbar_value = p.read64(boot_cpu.cpu_impl_reg[0])
+    if rvbar_value & 1:
+        locked_rvbar = rvbar_value & 0x0000fffffffff000
+
 if args.raw:
     image = args.payload.read_bytes()
     image += b"\x00\x00\x00\x00"
-    entry = new_base + args.entry_point
+    entry_offset = args.entry_point
 else:
     macho = MachO(args.payload.read_bytes())
     image = macho.prepare_image()
     image += b"\x00\x00\x00\x00"
-    entry = macho.entry
-    entry -= macho.vmin
-    entry += new_base
+    entry_offset = macho.entry - macho.vmin
+
+if locked_rvbar is not None:
+    new_base = locked_rvbar - (entry_offset & ~0xfff)
+entry = new_base + entry_offset
 
 if args.quiet:
     p.iodev_set_usage(IODEV.FB, 0)
@@ -44,10 +55,10 @@ if args.no_sepfw:
     blob_names = tuple(name for name in BOOT_BLOBS if name != "SEPFW")
 else:
     blob_names = BOOT_BLOBS
-blobs, image_size = find_boot_blobs(u.adt["chosen"]["memory-map"]._properties, blob_names, align(len(image)))
-bootargs_off = image_size
+blobs, blobs_size = find_boot_blobs(u.adt["chosen"]["memory-map"]._properties, blob_names, 0)
+bootargs_off = align(len(image))
 bootargs_size = 0x4000
-image_size += bootargs_size
+image_size = bootargs_off + bootargs_size
 
 # On M4/A18, iBoot adds a 48 KiB region ending at top_of_kernel_data
 # that secondary CPUs can't write to. This hack avoids using that region
@@ -61,9 +72,12 @@ if image_end > protected_start:
     )
 
 print(f"Total region size: 0x{image_size:x} bytes")
+# Keep firmware outside the fixed RVBAR image region and the inherited
+# secondary-read-only reservation. Reserve it for the next stage's heap.
+blobs_addr = u.memalign(0x4000, blobs_size)
 image_addr = u.malloc(image_size)
 
-copy_boot_blobs(p, [(name, src, size, image_addr + off) for name, src, size, off in blobs])
+copy_boot_blobs(p, [(name, src, size, blobs_addr + off) for name, src, size, off in blobs])
 
 print(f"Loading kernel image (0x{len(image):x} bytes)...")
 u.compressed_writemem(image_addr, image, True)
@@ -72,7 +86,7 @@ p.dc_cvau(image_addr, len(image))
 print("Adjusting addresses in ADT...")
 for name, src, size, off in blobs:
     mm = u.adt["chosen"]["memory-map"]
-    mm._properties[name] = (new_base + off, size)
+    mm._properties[name] = (blobs_addr + off, size)
     mm._types[name] = (Array(2, Int64ul), False)
 u.adt["chosen"]["memory-map"].BootArgs = (new_base + bootargs_off, bootargs_size)
 
@@ -97,7 +111,7 @@ if args.xnu:
                 remove_oslog(nub)
 
 rvbar = entry & ~0xfff
-if rvbar != u.base:
+if locked_rvbar is None and rvbar != u.base:
     print("Setting secondary CPU RVBARs...")
 
     for cpu in u.adt["cpus"]:
@@ -112,7 +126,8 @@ u.push_adt()
 print("Setting up bootargs...")
 tba = u.ba.copy()
 
-tba.top_of_kernel_data = u.ba.top_of_kernel_data
+tba.top_of_kernel_data = max(u.ba.top_of_kernel_data, blobs_addr + blobs_size,
+                             new_base + image_size)
 
 if len(args.boot_args) > 0:
     boot_args = " ".join(args.boot_args)

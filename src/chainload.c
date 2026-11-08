@@ -18,10 +18,13 @@ int rust_load_image(const char *spec, void **image, size_t *size);
 
 extern u8 _chainload_stub_start[];
 extern u8 _chainload_stub_end[];
+extern u8 _vectors_start[];
 
 int chainload_image(void *image, size_t size, char **vars, size_t var_cnt)
 {
-    u64 new_base = (u64)_base;
+    // The raw next stage starts with its reset vectors. iBoot locks RVBAR to
+    // our vectors, which follow the 64 KiB header in a Mach-O stage 1.
+    u64 new_base = (u64)_vectors_start;
     size_t image_size = size;
 
     printf("chainload: Preparing image...\n");
