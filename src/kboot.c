@@ -3302,6 +3302,21 @@ int kboot_prepare_dt(void *fdt)
     if (fdt_add_mem_rsv(dt, (u64)_base, ((u64)_end) - ((u64)_base)))
         bail("FDT: couldn't add reservation for m1n1\n");
 
+    if (chip_id == T8132 && (mrs(SYS_IMP_APL_ACC_CTXR_D_CTL_EL2) & 0x3ff)) {
+        /*
+         * 26A428's non-SPTM CTXR-D range starts at DeviceTree/TrustCache,
+         * before the Mach-O image (iBoot 0x25920 -> 0x39cd0). Its upper
+         * bound names the last 4 KiB page (0x3d74c). EL1 cannot execute in
+         * this window: reserve all of it, including the prefix before
+         * m1n1, so EFI placement and Linux module/JIT allocations avoid it.
+         */
+        u64 start = mrs(SYS_IMP_APL_ACC_CTXR_D_LWR_EL2);
+        u64 end = mrs(SYS_IMP_APL_ACC_CTXR_D_UPR_EL2) + SZ_4K;
+        if (fdt_add_mem_rsv(dt, start, end - start))
+            bail("FDT: couldn't reserve the CTXR-D EL2 execution window\n");
+        printf("FDT: Reserved CTXR-D EL2 window 0x%lx..0x%lx\n", start, end);
+    }
+
     if (!cpu_features->apple_sysregs_unlocked) {
         // On M4* / A18 Pro / M5*, there is a CTRR instance left enabled only
         // on the secondary (non-boot) cores. Add a reserved-memory region to
